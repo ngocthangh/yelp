@@ -1,7 +1,6 @@
 import scrapy
 import json
-from scrapy.selector import Selector
-from tutorial.items import YelpItem
+
 import csv
 import re
 
@@ -9,22 +8,18 @@ class YelpSpider(scrapy.Spider):
     name = "yelp"
     allowed_domains = ["yelp.com"]
     start_urls = [
-        # 'https://www.yelp.com/search?cflt=restaurants&find_loc=501',
-        'https://www.yelp.com/biz/himalayan-range-nepali-restaurant-cary',
-        'https://www.yelp.com/biz/oakleaf-pittsboro-2',
-        'https://www.yelp.com/biz/lucha-tigre-chapel-hill',
-        'https://www.yelp.com/biz/el-carbonero-graham',
+        'https://www.yelp.com/search?cflt=restaurants&find_loc=501'
     ]
 
-    # def parse(self, response):
-    #     cr = csv.reader(open(r"D:\Yelp\SVN\trunk\Project\tutorial_Tu\tutorial\spiders\zipcodetest.csv","r"))
-    #     for row in cr:
-    #         while (row[0][0] == '0'):
-    #             row[0] = row[0][+1:]
-    #         print('$$$$$$$$$$$$$$$$$$$$$$$$$ search: %s $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$' %row[0])
-    #         yelp_url  = "https://www.yelp.com/search?cflt=restaurants&find_loc=%s" % row[0].strip()
-    #         print(yelp_url)
-    #         yield response.follow(yelp_url, self.parseSearchPage)
+    def parse(self, response):
+        cr = csv.reader(open(r"D:\tutorial_Tu_Update1\tutorial_Tu\tutorial\spiders\zipcodetest.csv","r"))
+        for row in cr:
+            while (row[0][0] == '0'):
+                row[0] = row[0][+1:]
+            print('$$$$$$$$$$$$$$$$$$$$$$$$$ search: %s $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$' %row[0])
+            yelp_url  = "https://www.yelp.com/search?cflt=restaurants&find_loc=%s" % row[0].strip()
+            print(yelp_url)
+            yield response.follow(yelp_url, self.parseSearchPage)
 
     def parseSearchPage(self, response):
         
@@ -47,17 +42,16 @@ class YelpSpider(scrapy.Spider):
         # print('------------------ Location: %s ---------------------------' %latitude)
         
         page_links = response.css('a.biz-name::attr(href)')
-        count =0
         for href in page_links:
             yield response.follow(href, self.parseDetailPage)
-        # next_page = response.css('a.next::attr(href)').extract_first()
-        # if next_page is not None:
-        #     yield response.follow(next_page, callback=self.parseSearchPage)
+        next_page = response.css('a.next::attr(href)').extract_first()
+        if next_page is not None:
+            yield response.follow(next_page, callback=self.parseSearchPage)
         
-    def parse(self, response):
+    def parseDetailPage(self, response):
 
         script = response.css('script[type="application/ld+json"]::text').extract_first()
-        script_parse = json.loads(script)
+        script_parse = json.loads(str(script))
         print('#################### PostalCode: %s' % script_parse['address']['postalCode'])
         PostalCode = script_parse['address']['postalCode']
 
@@ -72,10 +66,24 @@ class YelpSpider(scrapy.Spider):
         
         website = response.css('span.biz-website a::text').extract_first()
 
-        Reviews  = response.css('p.quote::text').extract()
-        
-        for i in range(0, len(Reviews)):
-            Reviews[i] = (Reviews[i].strip())[+1:-1]
+        quotes  = response.css('p.quote')
+        Reviews =[]
+        for quote in quotes:
+            name = quote.css('a::text').extract_first()
+            quote = quote.css('p.quote').extract_first()
+            beginIndex = quote.find("<a")
+            endIndex = quote.find("</a>")
+            endIndex +=4
+            quote = quote[:beginIndex]+name+quote[endIndex:]
+            beginIndex = quote.find("\n")
+            endIndex = quote.find("<a")
+            beginIndex +=2
+            endIndex -=1
+            quote = quote[beginIndex:endIndex]
+            quote = quote.strip()[+1:-1]
+            Reviews.append(quote)
+        # for i in range(0, len(Reviews)):
+        #     Reviews[i] = (Reviews[i].strip())[+1:-1]
         Comments = response.css('div.review-content p::text').extract()
         for i in range(0, len(Comments)):
             if(i < len(Comments) - 1):
@@ -90,7 +98,7 @@ class YelpSpider(scrapy.Spider):
         PriceRange = Openrail.css('dd.price-description::text').extract_first()
 
         Hour = Sidebar.css('div.biz-hours')
-        BizDate = Hour[0].css('table.hours-table th::text').extract()
+        BizDate = Hour.css('table.hours-table th::text').extract()
         Schedule = []
         delta = 0
         for i in range(1, len(BizDate) + 1):
@@ -123,13 +131,23 @@ class YelpSpider(scrapy.Spider):
         Info = []
         for i in range(0, len(Info1)):
             Info.append(Info1[i].strip() + ' : ' + Info2[i].strip())
-
+        phone =response.css('span.biz-phone::text').extract()
+        if len(phone)>0:
+            phone=phone[0].strip()
+        else:
+            phone=''
+        rating=response.css('div.rating-info div.biz-rating div.i-stars::attr(title)').extract()
+        if len(rating)>0:
+            rating=rating[0].split(' ')[0]
+        else:
+            rating=''
+        category = response.css('div.price-category span.category-str-list a::text').extract()
         yield {
                 'Name': response.css('h1.biz-page-title::text').extract_first().strip(),
-                'Category': response.css('div.price-category span.category-str-list a::text').extract(),
-                'Rating': response.css('div.rating-info div.biz-rating div.i-stars::attr(title)').extract_first().split(' ')[0],
+                'Category': category,
+                'Rating': rating,
                 'Address': Address,
-                'Phone': response.css('span.biz-phone::text').extract_first().strip(),
+                'Phone': phone,
                 'PostalCode': PostalCode,
                 'Country' : Country,
                 'Location' : Location,
