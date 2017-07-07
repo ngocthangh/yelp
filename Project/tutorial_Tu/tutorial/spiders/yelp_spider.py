@@ -1,7 +1,6 @@
 import scrapy
 import json
-from scrapy.selector import Selector
-from tutorial.items import YelpItem
+
 import csv
 import re
 
@@ -9,55 +8,37 @@ class YelpSpider(scrapy.Spider):
     name = "yelp"
     allowed_domains = ["yelp.com"]
     start_urls = [
-        # 'https://www.yelp.com/search?cflt=restaurants&find_loc=501',
-        'https://www.yelp.com/biz/himalayan-range-nepali-restaurant-cary',
-        'https://www.yelp.com/biz/oakleaf-pittsboro-2',
-        'https://www.yelp.com/biz/lucha-tigre-chapel-hill',
-        'https://www.yelp.com/biz/el-carbonero-graham',
+        'https://www.yelp.com/search?cflt=restaurants&find_loc=501',
     ]
 
-    # def parse(self, response):
-    #     cr = csv.reader(open(r"D:\Yelp\SVN\trunk\Project\tutorial_Tu\tutorial\spiders\zipcodetest.csv","r"))
-    #     for row in cr:
-    #         while (row[0][0] == '0'):
-    #             row[0] = row[0][+1:]
-    #         print('$$$$$$$$$$$$$$$$$$$$$$$$$ search: %s $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$' %row[0])
-    #         yelp_url  = "https://www.yelp.com/search?cflt=restaurants&find_loc=%s" % row[0].strip()
-    #         print(yelp_url)
-    #         yield response.follow(yelp_url, self.parseSearchPage)
+    def parse(self, response):
+        cr = csv.reader(open(r"D:\Yelp\SVN\trunk\Project\tutorial_Tu\tutorial\spiders\us_postal_codes.csv","r"))
+        for row in cr:
+            while (row[0][0] == '0'):
+                row[0] = row[0][+1:]
+            print('$$$$$$$$$$$$$$$$$$$$$$$$$ search: %s $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$' %row[0])
+            yelp_url  = "https://www.yelp.com/search?cflt=restaurants&find_loc=%s" % row[0].strip()
+            print(yelp_url)
+            yield response.follow(yelp_url, self.parseSearchPage)
 
     def parseSearchPage(self, response):
-        
-        # lists = response.xpath('//script/text()').extract()
-        # index=0
-        # for list in lists:
-        #     if list.find("yelp.www.init.search.Controller") !=-1:
-        #         break
-        #     index +=1
-        # list = lists[index]
-        # words = list.replace(' ','').replace('"','').replace('{','').replace('}','').replace(',longitude',':longitude').split(',')
-        # coodinate =[]
-        # for word in words:
-        #     if word.find("location:latitude") !=-1:
-        #         word = word.replace('location:','').replace('latitude:','').replace(':longitude:',',')
-        #         coodinate.append(word)
-                 
-        # script_parse = json.loads(list.replace('yelp.www.init.search.Controller(','').replace(');',''))
-        # latitude = script['markers']['1']
-        # print('------------------ Location: %s ---------------------------' %latitude)
-        
         page_links = response.css('a.biz-name::attr(href)')
-        count =0
         for href in page_links:
             yield response.follow(href, self.parseDetailPage)
-        # next_page = response.css('a.next::attr(href)').extract_first()
-        # if next_page is not None:
-        #     yield response.follow(next_page, callback=self.parseSearchPage)
+        next_page = response.css('a.next::attr(href)').extract_first()
+        if next_page is not None:
+            yield response.follow(next_page, callback=self.parseSearchPage)
         
-    def parse(self, response):
+    def parseDetailPage(self, response):
 
         script = response.css('script[type="application/ld+json"]::text').extract_first()
-        script_parse = json.loads(script)
+        script_parse = ''
+        try:
+            script_parse = json.loads(str(script))
+            pass
+        except Exception as e:
+            return
+            raise
         print('#################### PostalCode: %s' % script_parse['address']['postalCode'])
         PostalCode = script_parse['address']['postalCode']
 
@@ -72,25 +53,57 @@ class YelpSpider(scrapy.Spider):
         
         website = response.css('span.biz-website a::text').extract_first()
 
-        Reviews  = response.css('p.quote::text').extract()
-        
-        for i in range(0, len(Reviews)):
-            Reviews[i] = (Reviews[i].strip())[+1:-1]
-        Comments = response.css('div.review-content p::text').extract()
-        for i in range(0, len(Comments)):
-            if(i < len(Comments) - 1):
-                Comments[i] = Comments[i].strip() 
+        quotes  = response.css('p.quote')
+        Reviews =[]
+        for quote in quotes:
+            name = quote.css('a::text').extract_first()
+            quote = quote.css('p.quote').extract_first()
+            beginIndex = quote.find("<a")
+            endIndex = quote.find("</a>")
+            endIndex +=4
+            quote = quote[:beginIndex]+name+quote[endIndex:]
+            beginIndex = quote.find("\n")
+            endIndex = quote.find("<a")
+            beginIndex +=2
+            endIndex -=1
+            quote = quote[beginIndex:endIndex]
+            quote = quote.strip()[+1:-1]
+            Reviews.append(quote)
 
-        Address = response.css('div.map-box-address strong.street-address address::text').extract()
-        for i in range(0, len(Address)):
-            Address[i] = Address[i].strip()
+        Comments = response.css('div.review')
+        Comments = Comments[1:]
+        listComments =''
+        for comment in Comments:
+            name = comment.css('a.user-display-name::text').extract()[0].replace('.','')
+            words = comment.css('div.review-content p::text').extract()
+            listWords =''
+            for word in words:
+                listWords +=word.strip()+" "
+            listComments +=name+": "+listWords+'\n'
+
+        Address = ''
+        Address0 = response.css('div.map-box-address strong.street-address address::text').extract()
+        Address1 = []
+        Address2 = []
+        if len(Address0) <= 0:
+            Address1 = response.css('div.map-box-address strong.street-address a::text').extract()
+            if len(Address1) <= 0:
+                Address1 = response.css('div.map-box-address strong.street-address::text').extract()
+            Address2 = response.css('div.map-box-address address::text').extract()
+        for i in range(0, len(Address0)):
+            Address += Address0[i].strip() + ', '
+        for i in range(0, len(Address1)):
+            Address += Address1[i].strip() + ', '
+        for i in range(0, len(Address2)):
+            Address += Address2[i].strip() + ', '
+        Address = Address[1:]
 
         Sidebar = response.css('div.sidebar')
         Openrail = Sidebar.css('div.open-rail')
         PriceRange = Openrail.css('dd.price-description::text').extract_first()
 
         Hour = Sidebar.css('div.biz-hours')
-        BizDate = Hour[0].css('table.hours-table th::text').extract()
+        BizDate = Hour.css('table.hours-table th::text').extract()
         Schedule = []
         delta = 0
         for i in range(1, len(BizDate) + 1):
@@ -107,7 +120,7 @@ class YelpSpider(scrapy.Spider):
                         for biz in BizHour:
                             hour += biz + ','
                         hour = hour[:-1]
-                        Schedule.append(BizDate[i - 1] + ' : ' + str(td[0]).strip() + ' - ' + str(td2[0]).strip() + '(Normally:' + hour + ')')
+                        Schedule.append(BizDate[i - 1] + ' : ' + hour)
                         delta = delta + 1
                     else:
                         Schedule.append(BizDate[i - 1] + ' : ' + str(td[0]).strip())
@@ -117,27 +130,41 @@ class YelpSpider(scrapy.Spider):
                     hour += biz + ','
                 hour = hour[:-1]
                 Schedule.append(BizDate[i - 1] + ' : ' + hour)
-
+        Schedules = ''
+        for hour in Schedule:
+            Schedules += hour + ';'
         Info1 = Sidebar.css('div.ywidget ul.ylist dl dt::text').extract()
         Info2 = Sidebar.css('div.ywidget ul.ylist dl dd::text').extract()
         Info = []
         for i in range(0, len(Info1)):
             Info.append(Info1[i].strip() + ' : ' + Info2[i].strip())
-
+        phone =response.css('span.biz-phone::text').extract()
+        if len(phone)>0:
+            phone=phone[0].strip()
+        else:
+            phone=''
+        rating=response.css('div.rating-info div.biz-rating div.i-stars::attr(title)').extract()
+        if len(rating)>0:
+            rating=rating[0].split(' ')[0]
+        else:
+            rating=''
+        cates = response.css('div.price-category')
+        category = cates[0].css('span.category-str-list a::text').extract()
         yield {
                 'Name': response.css('h1.biz-page-title::text').extract_first().strip(),
-                'Category': response.css('div.price-category span.category-str-list a::text').extract(),
-                'Rating': response.css('div.rating-info div.biz-rating div.i-stars::attr(title)').extract_first().split(' ')[0],
+                'Category': category,
+                'Rating': rating,
                 'Address': Address,
-                'Phone': response.css('span.biz-phone::text').extract_first().strip(),
+                'Phone': phone,
                 'PostalCode': PostalCode,
                 'Country' : Country,
                 'Location' : Location,
                 'Website': website,
                 'Review': Reviews,
-                'Comment': Comments,
+                'Comment': listComments,
                 'PriceRange': str(PriceRange).strip(),
-                'Hour': Schedule,
-                'MoreInfo': Info
+                'Hour': Schedules,
+                'MoreInfo': Info,
+                'Link': response.request.url
             }
         
