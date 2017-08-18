@@ -1,8 +1,10 @@
 import scrapy
 import json
-
+from msvcrt import getch
 import csv
 import re
+
+NATION = ['JP']
 
 class YelpSpider(scrapy.Spider):
     name = "yelp"
@@ -10,9 +12,14 @@ class YelpSpider(scrapy.Spider):
     start_urls = [
         'https://www.yelp.com/search?cflt=restaurants&find_loc=501',
     ]
+    handle_httpstatus_list = [503]
+
+    def __init__(self):
+        self.ids_seen = set()
+        self.ids_rev = set()
 
     def parse(self, response):
-        cr = csv.reader(open(r"D:\Yelp\SVN\trunk\Project\tutorial_Tu\tutorial\spiders\us_postal_codes.csv","r"))
+        cr = csv.reader(open(r"tutorial\spiders\postalcode\test.csv","r"))
         for row in cr:
             while (row[0][0] == '0'):
                 row[0] = row[0][+1:]
@@ -22,15 +29,30 @@ class YelpSpider(scrapy.Spider):
             yield response.follow(yelp_url, self.parseSearchPage)
 
     def parseSearchPage(self, response):
-        page_links = response.css('a.biz-name::attr(href)')
-        for href in page_links:
-            yield response.follow(href, self.parseDetailPage)
+        if response.status == 503:
+            print('ERROR ON GETTING DATA !!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            getch()
+        restaurants = response.css('div.search-result')
+        for restaurant in restaurants:
+            id = restaurant.css('::attr(data-biz-id)').extract()
+            id = id[0].strip() if len(id) else ''
+            if id != '' and id not in self.ids_seen:
+                self.ids_seen.add(id)
+                page_link = restaurant.css('a.biz-name::attr(href)').extract()
+                page_link = page_link[0].strip() if len(page_link) else ''
+                if page_link != '':
+                    yield response.follow(page_link, self.parseDetailPage, meta={'id':id})
+            else:
+                print('Ignoring duplicate restaurant...')
         next_page = response.css('a.next::attr(href)').extract_first()
         if next_page is not None:
             yield response.follow(next_page, callback=self.parseSearchPage)
         
     def parseDetailPage(self, response):
-
+        if response.status == 503:
+            print('ERROR ON GETTING DATA !!!!!!!!!!!!!!!!!!!!!!!!!!!')
+            getch()
+        id = response.meta['id']
         script = response.css('script[type="application/ld+json"]::text').extract_first()
         script_parse = ''
         try:
@@ -44,7 +66,9 @@ class YelpSpider(scrapy.Spider):
 
         print('#################### Address Country: %s' % script_parse['address']['addressCountry'])
         Country = script_parse['address']['addressCountry']
-        
+        if Country not in NATION:
+            print('Skipping not JP restaurant...')
+            return
         mapstate = response.css('div.lightbox-map::attr(data-map-state)').extract_first()
         mapstate_parse = json.loads(mapstate)
         Latitude = mapstate_parse['center']['latitude']
@@ -132,7 +156,7 @@ class YelpSpider(scrapy.Spider):
                 Schedule.append(BizDate[i - 1] + ' : ' + hour)
         Schedules = ''
         for hour in Schedule:
-            Schedules += hour + ';'
+            Schedules += hour + '; '
         Info1 = Sidebar.css('div.ywidget ul.ylist dl dt::text').extract()
         Info2 = Sidebar.css('div.ywidget ul.ylist dl dd::text').extract()
         Info = []
@@ -151,6 +175,7 @@ class YelpSpider(scrapy.Spider):
         cates = response.css('div.price-category')
         category = cates[0].css('span.category-str-list a::text').extract()
         yield {
+                'id' : id,
                 'Name': response.css('h1.biz-page-title::text').extract_first().strip(),
                 'Category': category,
                 'Rating': rating,
